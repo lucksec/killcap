@@ -5,7 +5,6 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.ItemEvent;
 import java.io.PrintWriter;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -15,8 +14,6 @@ import java.awt.event.ItemListener;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.swing.JComboBox;
-
 
 public class BurpExtender implements IBurpExtender, ITab, IHttpListener
 {
@@ -24,705 +21,513 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
     private IExtensionHelpers helpers;
     private JSplitPane splitPane;
     public PrintWriter stdout;
-    int switchs = 1; //开关 0关 1开
-    int clicks_Repeater=0;//64是监听 0是关闭
-    int clicks_Intruder=0;//32是监听 0是关闭
-    int clicks_Proxy=0;//4是监听 0是关闭
-    int xiapao_count = 0;//用于判断是第几个验证码
+    int switchs = 1;
+    int clicks_Repeater = 0;
+    int clicks_Intruder = 0;
+    int clicks_Proxy = 0;
+    int xiapao_count = 0;
     String XiaPao_api_HOST = "127.0.0.1";
     int XiaPao_api_Port = 8899;
-    JLabel jl_1;
-    Map<Integer, List<String>> yzm_set_map = new HashMap<>();// 创建一个HashMap对象,用来存储用户填写的url信息等
-    String captcha_url_1;//验证码url
-    String captcha_url_2;
-    String captcha_url_3;
-    String captcha_url_4;
-    String captcha_url_5;
-    String captcha_modular_1;//验证码模式
-    JTextArea jta;//存放日志输入
-    JTextField jps_txtfield_1;//高级模式re正则内容
-    JComboBox jb_1;//高级模式下 数据来源
-    Boolean re_switch = false;//高级模式 启动/关闭
-    String xp_version = "4.3";
+    JLabel jl_status;
+    Map<Integer, List<String>> yzm_set_map = new HashMap<>();
+    JTextArea jta;
+    JTextField jps_txtfield_1;
+    JComboBox jb_1;
+    Boolean re_switch = false;
+    String xp_version = "1.0";
+    String plugin_name = "killcap";
 
+    int retry_switch = 0;
+    int retry_max = 3;
+    String retry_keywords = "验证码错误,验证码已失效,验证码不正确";
+    Map<Integer, byte[]> originalRequests = new HashMap<>();
+    Map<Integer, Integer> retryCountMap = new HashMap<>();
 
     @Override
     public void registerExtenderCallbacks(final IBurpExtenderCallbacks callbacks)
     {
-        //输出
         this.stdout = new PrintWriter(callbacks.getStdout(), true);
-        this.stdout.println("hello xp_CAPTCHA!");
-        this.stdout.println("你好 欢迎使用 瞎跑!");
-        this.stdout.println("version:"+xp_version);
-
-        // keep a reference to our callbacks object
+        this.stdout.println("[*] " + plugin_name + " V" + xp_version + " loaded!");
         this.callbacks = callbacks;
-
-        // obtain an extension helpers object
         helpers = callbacks.getHelpers();
+        callbacks.setExtensionName(plugin_name + " V" + xp_version);
 
-        // set our extension name
-        callbacks.setExtensionName("xp_CAPTCHA V"+xp_version);
-
-        // create our UI
         SwingUtilities.invokeLater(new Runnable()
         {
             @Override
             public void run()
             {
-
-                // main split pane
+                // ==================== 主分割：左(9/10) 右(1/10) ====================
                 splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-                JSplitPane splitPanes = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
-                JSplitPane splitPanes2 = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+                splitPane.setDividerLocation(1200);
+                splitPane.setResizeWeight(0.9); // 左侧占90%
 
-                //左边框的内容
-                JPanel jp=new JPanel();
-                JLabel jl_0=new JLabel("    瞎跑接口HOST:Port：");
-                JTextField txtfield_0=new JTextField("127.0.0.1:8899",1);
-                JLabel jl_00=new JLabel("");
-                jp.setLayout(new GridLayout(16, 1));
-                JComboBox jb_set = new  JComboBox();    //创建JComboBox
-                jb_set.addItem("验证码编号：1");
-                jb_set.addItem("验证码编号：2");
-                jb_set.addItem("验证码编号：3");
-                jb_set.addItem("验证码编号：4");
-                jb_set.addItem("验证码编号：5");
-                JLabel jl_01=new JLabel("");
-                jl_1=new JLabel("    验证码编号：1  关键字为：@xiapao@1@    请在下列框中填写对应的验证码URL地址");
-                JTextField txtfield_1=new JTextField(1);
-                JLabel jl_2=new JLabel("");
+                // ==================== 左侧主面板 ====================
+                JPanel jp_left = new JPanel(new BorderLayout(5, 5));
+                jp_left.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
 
-                ButtonGroup group_1=new ButtonGroup();
-                JRadioButton rb_url_1_1=new JRadioButton("普通模式（GET请求）",true);
-                JRadioButton rb_url_1_2=new JRadioButton("复杂模式（自定义请求体，URL地址也要填写）");
+                // --- 左上：验证码配置 ---
+                JPanel jp_config = new JPanel(new BorderLayout(5, 5));
+
+                // 接口+编号 行
+                JPanel jp_top_row = new JPanel(new GridLayout(1, 2, 8, 0));
+                JPanel jp_api = new JPanel(new BorderLayout(3, 0));
+                jp_api.setBorder(BorderFactory.createTitledBorder(" OCR接口 "));
+                JTextField txtfield_0 = new JTextField("127.0.0.1:8899");
+                jp_api.add(txtfield_0, BorderLayout.CENTER);
+                JPanel jp_sel = new JPanel(new BorderLayout(3, 0));
+                jp_sel.setBorder(BorderFactory.createTitledBorder(" 验证码编号 "));
+                JComboBox jb_set = new JComboBox();
+                for (int i = 1; i <= 5; i++) jb_set.addItem("验证码 " + i);
+                jp_sel.add(jb_set, BorderLayout.CENTER);
+                jp_top_row.add(jp_api);
+                jp_top_row.add(jp_sel);
+
+                // 关键字+URL 行
+                JPanel jp_mid_row = new JPanel(new BorderLayout(5, 5));
+                JPanel jp_keyword = new JPanel(new BorderLayout(3, 0));
+                jp_keyword.setBorder(BorderFactory.createTitledBorder(" 关键字 "));
+                jl_status = new JLabel(" @killcap@1@ ", SwingConstants.CENTER);
+                jl_status.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
+                jl_status.setForeground(new Color(0, 153, 255));
+                jl_status.setOpaque(true);
+                jl_status.setBackground(new Color(240, 248, 255));
+                jp_keyword.add(jl_status, BorderLayout.CENTER);
+                JPanel jp_url = new JPanel(new BorderLayout(3, 0));
+                jp_url.setBorder(BorderFactory.createTitledBorder(" 验证码URL "));
+                JTextField txtfield_1 = new JTextField();
+                jp_url.add(txtfield_1, BorderLayout.CENTER);
+                jp_mid_row.add(jp_keyword, BorderLayout.WEST);
+                jp_mid_row.add(jp_url, BorderLayout.CENTER);
+
+                // 模式+输出 行
+                JPanel jp_bot_row = new JPanel(new GridLayout(1, 2, 8, 0));
+                JPanel jp_mode = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+                jp_mode.setBorder(BorderFactory.createTitledBorder(" 请求模式 "));
+                ButtonGroup group_1 = new ButtonGroup();
+                JRadioButton rb_url_1_1 = new JRadioButton("简单模式", true);
+                JRadioButton rb_url_1_2 = new JRadioButton("复杂模式");
                 group_1.add(rb_url_1_1);
                 group_1.add(rb_url_1_2);
-
-                JComboBox jb_set_case_sensitive = new  JComboBox();    //创建JComboBox
+                jp_mode.add(rb_url_1_1);
+                jp_mode.add(rb_url_1_2);
+                JPanel jp_output = new JPanel(new BorderLayout(3, 0));
+                jp_output.setBorder(BorderFactory.createTitledBorder(" 输出模式 "));
+                JComboBox jb_set_case_sensitive = new JComboBox();
                 jb_set_case_sensitive.addItem("纯整数0-9");
-                jb_set_case_sensitive.addItem("纯小写英文a-z");
-                jb_set_case_sensitive.addItem("纯大写英文A-Z");
-                jb_set_case_sensitive.addItem("小写英文a-z + 大写英文A-Z");
-                jb_set_case_sensitive.addItem("小写英文a-z + 整数0-9");
-                jb_set_case_sensitive.addItem("大写英文A-Z + 整数0-9");
-                jb_set_case_sensitive.addItem("小写英文a-z + 大写英文A-Z + 整数0-9");
-                jb_set_case_sensitive.addItem("默认字符库 - 小写英文a-z - 大写英文A-Z - 整数0-9");
-                jb_set_case_sensitive.addItem("不识别验证码，配合高级模块使用（适合验证码直接在响应包中）");
+                jb_set_case_sensitive.addItem("纯小写a-z");
+                jb_set_case_sensitive.addItem("纯大写A-Z");
+                jb_set_case_sensitive.addItem("大小写英文");
+                jb_set_case_sensitive.addItem("小写+数字");
+                jb_set_case_sensitive.addItem("大写+数字");
+                jb_set_case_sensitive.addItem("大小写+数字");
+                jb_set_case_sensitive.addItem("默认字符库");
+                jb_set_case_sensitive.addItem("不识别（高级模块）");
+                jb_set_case_sensitive.addItem("计算型验证码");
                 jb_set_case_sensitive.setSelectedIndex(6);
+                jp_output.add(jb_set_case_sensitive, BorderLayout.CENTER);
+                jp_bot_row.add(jp_mode);
+                jp_bot_row.add(jp_output);
 
+                // 状态提示
+                JLabel jl_hint = new JLabel(" ");
+                jl_hint.setForeground(Color.RED);
+                jl_hint.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
 
-                JLabel jl_url_1=new JLabel("验证码编号1：url未设置");
-                JLabel jl_url_2=new JLabel("验证码编号2：url未设置");
-                JLabel jl_url_3=new JLabel("验证码编号3：url未设置");
-                JLabel jl_url_4=new JLabel("验证码编号4：url未设置");
-                JLabel jl_url_5=new JLabel("验证码编号5：url未设置");
+                // 组装配置区
+                jp_config.add(jp_top_row, BorderLayout.NORTH);
+                jp_config.add(jp_mid_row, BorderLayout.CENTER);
+                JPanel jp_bottom = new JPanel(new BorderLayout(0, 3));
+                jp_bottom.add(jp_bot_row, BorderLayout.CENTER);
+                jp_bottom.add(jl_hint, BorderLayout.SOUTH);
+                jp_config.add(jp_bottom, BorderLayout.SOUTH);
 
+                // --- 左下：高级模式 + 已配置列表 ---
+                JPanel jp_bottom_area = new JPanel(new GridLayout(1, 2, 5, 0));
 
-
-
-                //左边
-                jp.add(jl_0);
-                jp.add(txtfield_0);
-                jp.add(jl_00);
-
-                jp.add(jb_set);
-                jp.add(jl_01);
-
-                jp.add(jl_1);
-                jp.add(txtfield_1);
-                jp.add(rb_url_1_1);
-                jp.add(rb_url_1_2);
-                jp.add(jb_set_case_sensitive);
-                jp.add(jl_2);
-
-                jp.add(jl_url_1);
-                jp.add(jl_url_2);
-                jp.add(jl_url_3);
-                jp.add(jl_url_4);
-                jp.add(jl_url_5);
-
-                //左边框 下面
-
-                JSplitPane splitPanes_zx = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-
-                //左边框 下面 - 左
-                JPanel jps_xz1 =new JPanel();
-                jps_xz1.setLayout(new GridLayout(1, 1)); //六行一列
-                String dome_ReQuest = "POST /captcha HTTP/1.1\n" +
-                        "Host: www.baidu.com\n" +
-                        "Cookie: baidu=1111;\n" +
-                        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:127.0) Gecko/20100101 Firefox/127.0\n" +
-                        "Accept: text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01\n" +
-                        "Sec-Fetch-Site: same-origin\n" +
-                        "Te: trailers\n" +
-                        "Connection: close\n" +
-                        "Content-Type: application/x-www-form-urlencoded\n" +
-                        "Content-Length: 0\n" +
-                        "\n" +
-                        "aa=111";
-                JTextArea jta_1=new JTextArea(dome_ReQuest);
-
-                //jta_1.setLineWrap(true);//自动换行
-                jta_1.setEditable(false);//不可编辑
-                jta_1.setBackground(Color.LIGHT_GRAY);    //设置背景色
-                JScrollPane jsp_zx_1=new JScrollPane(jta_1);    //将文本域放入滚动窗口
-                jps_xz1.add(jsp_zx_1);
-
-
-                //左边框 下面 - 右
-                JPanel jps_3=new JPanel();
-                jps_3.setLayout(new GridLayout(15, 1)); //六行一列
-                JLabel jps_2_0=new JLabel("【高级模式 验证码 1 设置】修改记得点击保存设置");    //创建一个标签
-                JLabel jps_2_1=new JLabel("数据来源：");    //创建一个标签
-                jb_1 = new  JComboBox();    //创建JComboBox
-                jb_1.addItem("验证码响应体");    //向下拉列表中添加一项
-                jb_1.addItem("验证码响应头");
-
-
-                JLabel jps_2_3=new JLabel("正则：");    //创建一个标签
-                jps_txtfield_1=new JTextField("\"uuid\":\"(.*?)\"",1);
-
-                JLabel jps_2_2=new JLabel("修改的数据包（关键字：@xiapao@x@）：");    //创建一个标签
-                JComboBox jb_2 = new  JComboBox();    //创建JComboBox
-                jb_2.addItem("要爆破的请求包");    //向下拉列表中添加一项
-                JButton jps_2_bt_1 =new JButton("开启");
-                JLabel jps_2_4=new JLabel("");//用来提示用的
+                // 高级模式
+                JPanel jp_adv = new JPanel(new BorderLayout(3, 3));
+                jp_adv.setBorder(BorderFactory.createTitledBorder(" 高级模式 "));
+                JPanel jp_adv_form = new JPanel(new GridLayout(5, 1, 3, 3));
+                JLabel jl_adv_title = new JLabel("验证码 1 设置");
+                jl_adv_title.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+                JPanel jp_src = new JPanel(new BorderLayout(3, 0));
+                jb_1 = new JComboBox();
+                jb_1.addItem("响应体");
+                jb_1.addItem("响应头");
+                jp_src.add(new JLabel("数据源:"), BorderLayout.WEST);
+                jp_src.add(jb_1, BorderLayout.CENTER);
+                JPanel jp_re = new JPanel(new BorderLayout(3, 0));
+                jps_txtfield_1 = new JTextField("\"uuid\":\"(.*?)\"");
+                jps_txtfield_1.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+                jp_re.add(new JLabel("正则:"), BorderLayout.WEST);
+                jp_re.add(jps_txtfield_1, BorderLayout.CENTER);
+                JLabel jl_adv_hint = new JLabel("关键字: @killcap@x@");
+                jl_adv_hint.setFont(new Font(Font.MONOSPACED, Font.BOLD, 11));
+                jl_adv_hint.setForeground(new Color(0, 153, 255));
+                JButton jps_2_bt_1 = new JButton("开启高级模式");
+                JLabel jps_2_4 = new JLabel("");
                 jps_2_4.setForeground(Color.red);
+                jp_adv_form.add(jl_adv_title);
+                jp_adv_form.add(jp_src);
+                jp_adv_form.add(jp_re);
+                jp_adv_form.add(jl_adv_hint);
+                jp_adv_form.add(jps_2_bt_1);
 
-                //高级模式开启按钮
-                jps_2_bt_1.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        jps_2_4.setText("请点击 保存配置 才生效");
-                        if(re_switch == false){
-                            re_switch = true;
-                            jps_2_bt_1.setText("关闭");
-                            jps_txtfield_1.setEditable(false);
-                            jps_txtfield_1.setBackground(Color.LIGHT_GRAY);//设置背景色
-                            jb_1.setEditable(true);
-                            jb_2.setEditable(true);
-                        }else {
-                            re_switch = false;
-                            jps_2_bt_1.setText("开启");
-                            jps_txtfield_1.setEditable(true);
-                            jps_txtfield_1.setBackground(Color.WHITE);//设置背景色
-                            jb_1.setEditable(false);
-                            jb_2.setEditable(false);
+                // 复杂模式请求包（放在高级模式下方）
+                JPanel jp_complex = new JPanel(new BorderLayout());
+                jp_complex.setBorder(BorderFactory.createTitledBorder(" 复杂模式请求包 "));
+                String dome = "POST /captcha HTTP/1.1\nHost: example.com\nCookie: session=xxx;\nContent-Type: application/x-www-form-urlencoded\n\nparam=value";
+                JTextArea jta_1 = new JTextArea(dome);
+                jta_1.setEditable(false);
+                jta_1.setBackground(new Color(245, 245, 245));
+                jta_1.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+                jp_complex.add(new JScrollPane(jta_1), BorderLayout.CENTER);
 
-                        }
-                    }
-                });
+                // 左侧下半部分：上下分割
+                JSplitPane splitLeftBottom = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+                splitLeftBottom.setTopComponent(jp_adv_form);
+                splitLeftBottom.setBottomComponent(jp_complex);
+                splitLeftBottom.setDividerLocation(150);
 
-                //高级模式 数据来源下拉框
-                jb_1.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        if(jb_1.getSelectedIndex()==1){
-                            jps_txtfield_1.setText("Set-Cookie|SESSION=(.*?);");
-                            jta.insert("验证码响应头正则格式为：响应头参数名|响应头对应的参数值的正则。如：Set-Cookie|SESSION=(.*?);\n\n",0);
-                        }else {
-                            jps_txtfield_1.setText("\"uuid\":\"(.*?)\"");
-                        }
-                    }
-                });
+                // 已配置列表
+                JPanel jp_list = new JPanel(new GridLayout(6, 1, 2, 2));
+                jp_list.setBorder(BorderFactory.createTitledBorder(" 已配置 "));
+                JLabel jl_list_title = new JLabel("编号 | 模式 | URL");
+                jl_list_title.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
+                jp_list.add(jl_list_title);
+                JLabel[] jl_urls = new JLabel[5];
+                for (int i = 0; i < 5; i++) {
+                    jl_urls[i] = new JLabel("  " + (i+1) + ": 未配置");
+                    jl_urls[i].setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+                    jp_list.add(jl_urls[i]);
+                }
 
-                //验证码选择下拉框事件
+                jp_bottom_area.add(splitLeftBottom);
+                jp_bottom_area.add(jp_list);
+
+                // 组装左侧
+                jp_left.add(jp_config, BorderLayout.NORTH);
+                jp_left.add(jp_bottom_area, BorderLayout.CENTER);
+
+                // ==================== 右侧面板(辅助) ====================
+                JPanel jp_right = new JPanel(new BorderLayout(5, 5));
+                jp_right.setBorder(BorderFactory.createEmptyBorder(5, 5, 5, 5));
+
+                // --- 右上：控制区 ---
+                JPanel jp_ctrl = new JPanel();
+                jp_ctrl.setLayout(new BoxLayout(jp_ctrl, BoxLayout.Y_AXIS));
+
+                // 插件信息
+                JPanel jp_info = new JPanel(new GridLayout(3, 1));
+                jp_info.setBorder(BorderFactory.createTitledBorder(" " + plugin_name + " V" + xp_version + " "));
+                JLabel jl_name = new JLabel("Author: luckone");
+                jl_name.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+                JLabel jl_desc = new JLabel("OCR + 大模型");
+                JLabel jl_ver = new JLabel("验证码识别插件");
+                jp_info.add(jl_name);
+                jp_info.add(jl_desc);
+                jp_info.add(jl_ver);
+
+                // 监控设置
+                JPanel jp_mon = new JPanel(new GridLayout(4, 1, 2, 2));
+                jp_mon.setBorder(BorderFactory.createTitledBorder(" 监控 "));
+                JCheckBox chkbox1 = new JCheckBox("启动插件", true);
+                JCheckBox chkbox2 = new JCheckBox("Intruder");
+                JCheckBox chkbox3 = new JCheckBox("Repeater");
+                JCheckBox chkbox4 = new JCheckBox("Proxy");
+                jp_mon.add(chkbox1);
+                jp_mon.add(chkbox2);
+                jp_mon.add(chkbox3);
+                jp_mon.add(chkbox4);
+
+                // 重试设置（使用标签而非文本框）
+                JPanel jp_retry = new JPanel(new GridLayout(4, 1, 2, 2));
+                jp_retry.setBorder(BorderFactory.createTitledBorder(" 重试 "));
+                JCheckBox chkbox5 = new JCheckBox("错误重试");
+                JLabel jl_retry_info = new JLabel(" 次数: 3");
+                jl_retry_info.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+                JLabel jl_retry_kw = new JLabel(" 关键词: 验证码错误");
+                jl_retry_kw.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
+                jl_retry_kw.setToolTipText("验证码错误,验证码已失效,验证码不正确");
+                jp_retry.add(chkbox5);
+                jp_retry.add(jl_retry_info);
+                jp_retry.add(jl_retry_kw);
+                jp_retry.add(new JLabel(""));
+
+                // 按钮
+                JPanel jp_btn = new JPanel(new GridLayout(2, 1, 3, 3));
+                JButton btn1 = new JButton("保存配置");
+                btn1.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+                btn1.setBackground(new Color(0, 120, 215));
+                btn1.setForeground(Color.WHITE);
+                btn1.setFocusPainted(false);
+                JButton btn2 = new JButton("清空日志");
+                jp_btn.add(btn1);
+                jp_btn.add(btn2);
+
+                // 组装右上
+                jp_ctrl.add(jp_info);
+                jp_ctrl.add(Box.createVerticalStrut(3));
+                jp_ctrl.add(jp_mon);
+                jp_ctrl.add(Box.createVerticalStrut(3));
+                jp_ctrl.add(jp_retry);
+                jp_ctrl.add(Box.createVerticalStrut(3));
+                jp_ctrl.add(jp_btn);
+
+                // --- 右下：日志 ---
+                JPanel jp_log = new JPanel(new BorderLayout());
+                jp_log.setBorder(BorderFactory.createTitledBorder(" 日志 "));
+                jta = new JTextArea();
+                jta.setLineWrap(true);
+                jta.setEditable(false);
+                jta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+                jp_log.add(new JScrollPane(jta), BorderLayout.CENTER);
+
+                jp_right.add(jp_ctrl, BorderLayout.NORTH);
+                jp_right.add(jp_log, BorderLayout.CENTER);
+
+                // ==================== 组装 ====================
+                splitPane.setLeftComponent(jp_left);
+                splitPane.setRightComponent(jp_right);
+
+                // ==================== 事件 ====================
                 jb_set.addActionListener(new ActionListener() {
-                    @Override
                     public void actionPerformed(ActionEvent e) {
-                        // 当用户从下拉列表中选择一个项目时，会触发这个事件
-                        // 获取选中的项目
-                        String selectedItem = (String) jb_set.getSelectedItem();
-                        //选择的第几个
-                        int selectindex = jb_set.getSelectedIndex()+1;
-                        // 显示选中的项目
-                        jl_1.setText("    "+selectedItem+"  关键字为：@xiapao@"+String.valueOf(selectindex)+"@    请在下列框中填写对应的验证码URL地址");
-                        jps_2_0.setText("【高级模式 验证码 "+String.valueOf(selectindex)+" 设置】修改记得点击保存设置");    //创建一个标签
-
-                        //判断key存不存在
-                        if (!yzm_set_map.containsKey(selectindex)) {
+                        int idx = jb_set.getSelectedIndex() + 1;
+                        jl_status.setText(" @killcap@" + idx + "@ ");
+                        jl_adv_title.setText("验证码 " + idx + " 设置");
+                        if (yzm_set_map.containsKey(idx)) {
+                            List<String> d = yzm_set_map.get(idx);
+                            txtfield_1.setText(d.get(0));
+                            rb_url_1_1.setSelected(d.get(1).equals("1"));
+                            rb_url_1_2.setSelected(d.get(1).equals("2"));
+                            jb_set_case_sensitive.setSelectedIndex(Integer.parseInt(d.get(2)));
+                            jta_1.setText(d.get(3));
+                            jb_1.setSelectedIndex(Integer.parseInt(d.get(4)));
+                            jps_txtfield_1.setText(d.get(5));
+                            re_switch = d.get(6).equals("true");
+                            jps_2_bt_1.setText(re_switch ? "关闭高级" : "开启高级");
+                        } else {
                             txtfield_1.setText("");
                             jb_set_case_sensitive.setSelectedIndex(6);
                             rb_url_1_1.setSelected(true);
-                            jl_2.setText("");
-                            jta_1.setText(dome_ReQuest);
+                            jl_hint.setText(" ");
+                            jta_1.setText(dome);
                             jb_1.setSelectedIndex(0);
                             jps_txtfield_1.setText("\"uuid\":\"(.*?)\"");
-                            jps_txtfield_1.setEditable(true);
-                            jps_txtfield_1.setBackground(Color.WHITE);//设置背景色
-                            jps_2_bt_1.setText("开启");
-                            jl_0.setText("    瞎跑接口HOST:Port：");
-                            jb_1.setEditable(false);
-                            jb_2.setEditable(false);
-
-                        }else{//存在
-                            jl_2.setText("");
-                            List<String> yzm_set_data = yzm_set_map.get(selectindex);
-                            txtfield_1.setText(yzm_set_data.get(0));
-                            if(yzm_set_data.get(1).contains("1")){
-                                rb_url_1_1.setSelected(true);
-                            }else {
-                                rb_url_1_2.setSelected(true);
-                            }
-                            jb_set_case_sensitive.setSelectedIndex(Integer.valueOf(yzm_set_data.get(2)));
-                            jta_1.setText(yzm_set_data.get(3));
-                            jb_1.setSelectedIndex(Integer.valueOf(yzm_set_data.get(4)));
-                            jps_txtfield_1.setText(yzm_set_data.get(5));
-                            if (yzm_set_data.get(6).equals("true")){
-                                jps_2_bt_1.setText("关闭");
-                            }else{
-                                jps_2_bt_1.setText("开启");
-                            }
-                            if(re_switch == false){
-                                jps_txtfield_1.setEditable(true);
-                                jps_txtfield_1.setBackground(Color.WHITE);//设置背景色
-                                jb_1.setEditable(false);
-                                jb_2.setEditable(false);
-                            }else {
-                                jps_txtfield_1.setEditable(false);
-                                jps_txtfield_1.setBackground(Color.LIGHT_GRAY);//设置背景色
-                                jb_1.setEditable(true);
-                                jb_2.setEditable(true);
-                            }
+                            re_switch = false;
+                            jps_2_bt_1.setText("开启高级");
                         }
-                        
                     }
                 });
 
-
-
-                //模式选择 - 单选按钮事件监听
                 rb_url_1_1.addItemListener(new ItemListener() {
-                    @Override
                     public void itemStateChanged(ItemEvent e) {
                         if (e.getStateChange() == ItemEvent.SELECTED) {
-                            // 当单选按钮被选中时执行的操作
-                            jta_1.setEditable(false);//不可编辑
-                            jta_1.setBackground(Color.LIGHT_GRAY);    //设置背景色
+                            jta_1.setEditable(false);
+                            jta_1.setBackground(new Color(245, 245, 245));
                         }
                     }
                 });
                 rb_url_1_2.addItemListener(new ItemListener() {
-                    @Override
                     public void itemStateChanged(ItemEvent e) {
                         if (e.getStateChange() == ItemEvent.SELECTED) {
-                            // 当单选按钮被选中时执行的操作
-                            jta_1.setEditable(true);//不可编辑
-                            jta_1.setBackground(Color.WHITE);    //设置背景色
+                            jta_1.setEditable(true);
+                            jta_1.setBackground(Color.WHITE);
                         }
                     }
                 });
 
-                splitPanes_zx.setLeftComponent(jps_xz1);//左边
-                splitPanes_zx.setRightComponent(jps_3);//右边
-
-
-
-                //右边框上面的内容1
-                JPanel jps=new JPanel();
-                jps.setLayout(new GridLayout(14, 1)); //六行一列
-                JLabel jls=new JLabel("插件名：瞎跑 author：算命縖子");    //创建一个标签
-                JLabel jls_1=new JLabel("blog:www.nmd5.com");
-                JLabel jls_2=new JLabel("版本：xp_CAPTCHA V"+xp_version);
-                JLabel jls_3=new JLabel("感谢名单：小白(Assassins)");
-                JCheckBox chkbox1=new JCheckBox("启动插件", true);//创建指定文本和状态的复选框
-                JCheckBox chkbox2=new JCheckBox("监控Intruder");//创建指定文本的复选框
-                JCheckBox chkbox3=new JCheckBox("监控Repeater");
-                JCheckBox chkbox4=new JCheckBox("监控Proxy");
-                JButton btn1=new JButton("保存配置");
-                JLabel jls_5=new JLabel("修改任何配置都记得点击保存");
-
-
-                JLabel jls_4=new JLabel("说明：在验证码处填写对应关键字即可");
-                JLabel jls_6=new JLabel("备注：验证码返回包为json格式也支持");
-                JLabel jls_7=new JLabel("注意：爆破时，线程记得设置成1");
-                jls_7.setForeground(Color.red);
-                JButton btn2=new JButton("清空日志");
-
-
-
-
-
-
-
-                //右边框下面的内容
-                JPanel jps_2=new JPanel();
-                jps_2.setLayout(new GridLayout(1, 1));
-                jta=new JTextArea(18,16);
-                jta.setLineWrap(true);//自动换行
-                jta.setEditable(false);//不可编辑
-                JScrollPane jsp=new JScrollPane(jta);    //将文本域放入滚动窗口
-
-
-                //添加复选框监听事件
-                chkbox1.addItemListener(new ItemListener() {
-                    @Override
-                    public void itemStateChanged(ItemEvent e) {
-                        if(chkbox1.isSelected()){
-                            stdout.println("插件 瞎跑 启动");
-                            switchs = 1;
-                        }else {
-                            stdout.println("插件 瞎跑 关闭");
-                            switchs = 0;
-                        }
-
+                jps_2_bt_1.addActionListener(new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        re_switch = !re_switch;
+                        jps_2_bt_1.setText(re_switch ? "关闭高级" : "开启高级");
+                        jps_2_4.setText("请保存配置");
                     }
+                });
+
+                jb_1.addActionListener(new ActionListener() {
+                    public void actionPerformed(ActionEvent e) {
+                        jps_txtfield_1.setText(jb_1.getSelectedIndex() == 1 ?
+                            "Set-Cookie|SESSION=(.*?);" : "\"uuid\":\"(.*?)\"");
+                    }
+                });
+
+                chkbox1.addItemListener(new ItemListener() {
+                    public void itemStateChanged(ItemEvent e) { switchs = chkbox1.isSelected() ? 1 : 0; }
                 });
                 chkbox2.addItemListener(new ItemListener() {
-                    @Override
-                    public void itemStateChanged(ItemEvent e) {
-                        if (chkbox2.isSelected()){
-                            stdout.println("启动 监控Intruder");
-                            clicks_Intruder = 32;
-                        }else {
-                            stdout.println("关闭 监控Intruder");
-                            clicks_Intruder = 0;
-                        }
-                    }
+                    public void itemStateChanged(ItemEvent e) { clicks_Intruder = chkbox2.isSelected() ? 32 : 0; }
                 });
                 chkbox3.addItemListener(new ItemListener() {
-                    @Override
-                    public void itemStateChanged(ItemEvent e) {
-                        if(chkbox3.isSelected()) {
-                            stdout.println("启动 监控Repeater");
-                            clicks_Repeater = 64;
-                        }else {
-                            stdout.println("关闭 监控Repeater");
-                            clicks_Repeater = 0;
-                        }
-                    }
+                    public void itemStateChanged(ItemEvent e) { clicks_Repeater = chkbox3.isSelected() ? 64 : 0; }
                 });
-
                 chkbox4.addItemListener(new ItemListener() {
-                    @Override
-                    public void itemStateChanged(ItemEvent e) {
-                        if(chkbox3.isSelected()) {
-                            stdout.println("启动 监控Proxy");
-                            clicks_Proxy = 4;
-                        }else {
-                            stdout.println("关闭 监控Proxy");
-                            clicks_Proxy = 0;
-                        }
-                    }
+                    public void itemStateChanged(ItemEvent e) { clicks_Proxy = chkbox4.isSelected() ? 4 : 0; }
+                });
+                chkbox5.addItemListener(new ItemListener() {
+                    public void itemStateChanged(ItemEvent e) { retry_switch = chkbox5.isSelected() ? 1 : 0; }
                 });
 
-                //保存配置按钮
                 btn1.addActionListener(new ActionListener() {
-                    @Override
                     public void actionPerformed(ActionEvent e) {
-                        XiaPao_api_HOST = txtfield_0.getText().split(":")[0];
-                        XiaPao_api_Port = Integer.parseInt(txtfield_0.getText().split(":")[1]);
-                        captcha_url_1 = txtfield_1.getText();
-                        jps_2_4.setText("");
-                        stdout.println(XiaPao_api_HOST);
-                        stdout.println(captcha_url_1);
-                        stdout.println(captcha_url_2);
-                        stdout.println(captcha_url_3);
-                        stdout.println(captcha_url_4);
-                        stdout.println(captcha_url_5);
-
-                        if(captcha_url_1.length()==0){
-                            jta.insert("error：url为空，保存失败\n\n",0);
-                        }else {
-                            String select_ms="";
-                            if(rb_url_1_1.isSelected()){
-                                captcha_modular_1 = "1";
-                                select_ms = rb_url_1_1.getText().split("（")[0];
-                            }else {
-                                captcha_modular_1 = "2";
-                                select_ms = rb_url_1_2.getText().split("（")[0];
-                            }
-                            jl_00.setText(XiaPao_api_HOST+":"+XiaPao_api_Port);
-                            jl_00.setForeground(Color.red);
-
-                            String selectedItem = (String) jb_set.getSelectedItem();//选择编号的名字
-                            String selectedItem2 = (String) jb_set_case_sensitive.getSelectedItem();//验证码输出模式
-                            jl_2.setText("======》"+selectedItem+"    验证码模式："+select_ms+"    验证码输出模式："+selectedItem2+"    URL："+captcha_url_1);
-                            jl_2.setForeground(Color.red);
-
-
-
-                            //添加数据到map里面
-                            //url、模式（1普通、2复杂）、验证码输出模式、复杂模式的验证码请求包、高级模式-数据来源（响应头/体）、高级模式-正则、高级模式-按钮（启动true/关闭false）
-                            int selectindex = jb_set.getSelectedIndex()+1;//当前的验证码编号
-                            int selectindex2 = jb_set_case_sensitive.getSelectedIndex();//当前的验证码输出模式
-                            int selectindex3 = jb_1.getSelectedIndex(); //高级设置中的数据来源（响应头/体）
-
-                            List<String> newList = new ArrayList<>();
-                            newList.add(captcha_url_1);//验证码url地址
-                            newList.add(captcha_modular_1);//模式名字
-                            newList.add(String.valueOf(selectindex2));//当前的验证码输出模式
-                            newList.add(jta_1.getText());//复杂模式的验证码请求包
-                            newList.add(String.valueOf(selectindex3));//高级模式-数据来源（响应头/体）
-                            newList.add(jps_txtfield_1.getText());//高级模式-正则
-                            newList.add(String.valueOf(re_switch));//高级模式-按钮（启动true/关闭false）
-                            yzm_set_map.put(selectindex, newList);
-
-
-                            //标签更新
-                            if(selectindex ==1 ){
-                                jl_url_1.setText("验证码编号1："+select_ms+"、"+selectedItem2+"    URL:"+captcha_url_1);
-                            }else if (selectindex ==2){
-                                jl_url_2.setText("验证码编号2："+select_ms+"、"+selectedItem2+"    URL:"+captcha_url_1);
-                            }else if (selectindex ==3){
-                                jl_url_3.setText("验证码编号3："+select_ms+"、"+selectedItem2+"    URL:"+captcha_url_1);
-                            }else if (selectindex ==4){
-                                jl_url_4.setText("验证码编号4："+select_ms+"、"+selectedItem2+"    URL:"+captcha_url_1);
-                            }else if (selectindex ==5){
-                                jl_url_5.setText("验证码编号5："+select_ms+"、"+selectedItem2+"    URL:"+captcha_url_1);
-                            }
-
-
-
-
-
-
-
+                        try {
+                            String[] hp = txtfield_0.getText().split(":");
+                            XiaPao_api_HOST = hp[0];
+                            XiaPao_api_Port = Integer.parseInt(hp[1]);
+                        } catch (Exception ex) {
+                            jta.insert("[!] 接口地址格式错误\n", 0);
+                            return;
                         }
+                        String url = txtfield_1.getText();
+                        if (url.isEmpty()) { jta.insert("[!] URL为空\n", 0); return; }
 
+                        String mode = rb_url_1_1.isSelected() ? "1" : "2";
+                        String modeName = rb_url_1_1.isSelected() ? "简单" : "复杂";
+                        int outIdx = jb_set_case_sensitive.getSelectedIndex();
+                        int advSrc = jb_1.getSelectedIndex();
+                        int idx = jb_set.getSelectedIndex() + 1;
 
+                        List<String> cfg = new ArrayList<>();
+                        cfg.add(url); cfg.add(mode); cfg.add(String.valueOf(outIdx));
+                        cfg.add(jta_1.getText()); cfg.add(String.valueOf(advSrc));
+                        cfg.add(jps_txtfield_1.getText()); cfg.add(String.valueOf(re_switch));
+                        yzm_set_map.put(idx, cfg);
 
+                        String shortUrl = url.length() > 30 ? url.substring(0, 30) + ".." : url;
+                        jl_urls[idx-1].setText("  " + idx + ": " + modeName + " | " + shortUrl);
+                        jl_hint.setText("已保存: 验证码 " + idx);
+                        jl_hint.setForeground(new Color(0, 153, 255));
+                        jta.insert("[*] 保存: 验证码 " + idx + " (" + modeName + ")\n", 0);
                     }
                 });
 
                 btn2.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        jta.setText("");
-                    }
+                    public void actionPerformed(ActionEvent e) { jta.setText(""); }
                 });
 
-                //右边上 设置
-                jps.add(jls);
-                jps.add(jls_1);
-                jps.add(jls_2);
-                jps.add(jls_3);
-                jps.add(chkbox1);
-                jps.add(chkbox2);
-                jps.add(chkbox3);
-                jps.add(chkbox4);
-                jps.add(btn1);
-                jps.add(jls_5);
-
-                jps.add(jls_4);
-                jps.add(jls_6);
-                jps.add(jls_7);
-                jps.add(btn2);
-
-                //右边下
-                jps_2.add(jsp);
-
-
-                //右边上 高级设置
-                jps_3.add(jps_2_0);
-                jps_3.add(jps_2_1);
-                jps_3.add(jb_1);
-                jps_3.add(jps_2_3);
-                jps_3.add(jps_txtfield_1);
-                jps_3.add(jps_2_2);
-                jps_3.add(jb_2);
-                jps_3.add(jps_2_bt_1);
-                jps_3.add(jps_2_4);
-
-
-
-
-
-                //右边
-                splitPanes.setLeftComponent(jps);//上面
-                splitPanes.setRightComponent(jps_2);//下面
-
-                //左边
-                splitPanes2.setLeftComponent(jp);
-                splitPanes2.setRightComponent(splitPanes_zx);
-
-                //整体分布
-                splitPane.setLeftComponent(splitPanes2);//添加在左面
-                splitPane.setRightComponent(splitPanes);//添加在右面
-                splitPane.setDividerLocation(1000);//设置分割的大小
-
-                // customize our UI components
                 callbacks.customizeUiComponent(splitPane);
-                callbacks.customizeUiComponent(jps);
-                callbacks.customizeUiComponent(jp);
-                callbacks.customizeUiComponent(jps_2);
-                callbacks.customizeUiComponent(jps_3);
-
-                // add the custom tab to Burp's UI
                 callbacks.addSuiteTab(BurpExtender.this);
-
-                // register ourselves as an HTTP listener
                 callbacks.registerHttpListener(BurpExtender.this);
-
             }
         });
     }
 
-    @Override
-    public String getTabCaption()
-    {
-        return "xia Pao";
-    }
-
-    @Override
-    public Component getUiComponent()
-    {
-        return splitPane;
-    }
+    @Override public String getTabCaption() { return plugin_name; }
+    @Override public Component getUiComponent() { return splitPane; }
 
     @Override
     public void processHttpMessage(int toolFlag, boolean messageIsRequest, IHttpRequestResponse messageInfo)
     {
+        if (switchs != 1) return;
+        if (toolFlag != clicks_Repeater && toolFlag != clicks_Intruder && toolFlag != clicks_Proxy) return;
 
-        if(switchs == 1){//插件开关
-            if(toolFlag == clicks_Repeater || toolFlag == clicks_Intruder || toolFlag == clicks_Proxy ){//监听Repeater、Intruder、Proxy
-                if(messageIsRequest){//请求包
-                    String Request_data = helpers.bytesToString(messageInfo.getRequest());
-
-                    if(Request_data.indexOf("@xiapao@") != -1){//判断请求包中是否带有特征
-
-                        Pattern re_p = Pattern.compile("@xiapao@(\\d)@");
-                        Matcher re_m = re_p.matcher(Request_data);
-                        if (re_m.find()){
-                            xiapao_count = Integer.parseInt(re_m.group(1));//验证码url编号
-                            //stdout.println(xiapao_count);
-                        }
-                        //stdout.println(helpers.bytesToString(messageInfo.getRequest()));
-                        checkVul(messageInfo,xiapao_count);
-                    }
-                }
-
+        if (messageIsRequest) {
+            String req = helpers.bytesToString(messageInfo.getRequest());
+            if (req.indexOf("@killcap@") == -1) return;
+            Matcher m = Pattern.compile("@killcap@(\\d)@").matcher(req);
+            if (m.find()) xiapao_count = Integer.parseInt(m.group(1));
+            originalRequests.put(messageInfo.hashCode(), messageInfo.getRequest());
+            checkVul(messageInfo, xiapao_count);
+        } else {
+            if (retry_switch == 1 && messageInfo.getResponse() != null) {
+                checkResponseForRetry(messageInfo);
             }
         }
-
     }
 
-
-    private void checkVul(IHttpRequestResponse baseRequestResponse, int xiapao_count){
-        String captcha_url;//验证码url
-        String captcha_type;//验证码类型
-        //map里面的内容：url、模式（1普通、2复杂）、验证码输出模式、复杂模式的验证码请求包、高级模式-数据来源（响应头/体）、高级模式-正则、高级模式-按钮（启动true/关闭false）
-        List<String> yzm_set_map_data;
-
-        if(yzm_set_map.containsKey(xiapao_count)){
-            yzm_set_map_data = yzm_set_map.get(xiapao_count);
-            captcha_url = yzm_set_map_data.get(0);
-            captcha_type = yzm_set_map_data.get(1);
-        }else {
-            if(xiapao_count == 1 || xiapao_count == 2 || xiapao_count == 3 || xiapao_count ==4 || xiapao_count==5){
-                jta.insert("验证码"+xiapao_count+"：还未填写对应的验证码地址哟！！\n\n",0);//验证码结果输出到插件界面
-            }else{
-                jta.insert("验证码"+xiapao_count+"：没该验证码编号！\n\n",0);//验证码结果输出到插件界面
-            }
+    private void checkVul(IHttpRequestResponse baseRequestResponse, int xiapao_count) {
+        if (!yzm_set_map.containsKey(xiapao_count)) {
+            jta.insert("[!] 验证码 " + xiapao_count + " 未配置\n", 0);
+            return;
+        }
+        List<String> cfg = yzm_set_map.get(xiapao_count);
+        String captcha_url = cfg.get(0);
+        if (captcha_url.length() <= 1) {
+            jta.insert("[!] 验证码 " + xiapao_count + " URL为空\n", 0);
             return;
         }
 
-        
-        
         List<String> headers = helpers.analyzeRequest(baseRequestResponse).getHeaders();
         String request = helpers.bytesToString(baseRequestResponse.getRequest());
-        
         String cookies = "";
-        for(String cookie:headers){//获取cookie
-            if(cookie.indexOf("Cookie")!=-1){
-                cookies = cookie;
-            }
-        }
+        for (String h : headers) { if (h.indexOf("Cookie") != -1) cookies = h; }
 
+        String body = "xp_url=" + helpers.base64Encode(captcha_url) +
+            "&xp_type=" + cfg.get(1) +
+            "&xp_cookie=" + helpers.base64Encode(cookies.length() >= 1 ? cookies : "null=null;") +
+            "&xp_set_ranges=" + cfg.get(2) +
+            "&xp_complex_request=" + helpers.base64Encode(cfg.get(3)) +
+            "&xp_rf=" + cfg.get(4) +
+            "&xp_re=" + helpers.base64Encode(cfg.get(5)) +
+            "&xp_is_re_run=" + cfg.get(6);
 
-        String captcha_cookie_base64 = "";
-        String captcha_url_base64 = helpers.base64Encode(captcha_url);//验证码url base64编码
+        List<String> h = new ArrayList<>();
+        h.add("POST /imgurl HTTP/1.1");
+        h.add("Host: " + XiaPao_api_HOST);
 
-        if(captcha_url.length()<=1){
-            jta.insert("验证码"+xiapao_count+"：还未填写对应的验证码地址哟！\n\n",0);//验证码结果输出到插件界面
+        IHttpService svc = helpers.buildHttpService(XiaPao_api_HOST, XiaPao_api_Port, "http");
+        IHttpRequestResponse resp = callbacks.makeHttpRequest(svc, helpers.buildHttpMessage(h, body.getBytes()));
+
+        if (resp.getResponse() == null || resp.getResponse().length == 0) {
+            jta.insert("[!] OCR服务无响应\n", 0);
             return;
         }
 
-        if (cookies.length()>=1){//判断数据包中是否有cookie
-            captcha_cookie_base64 = helpers.base64Encode(cookies);//Cookie base64编码
-        }else {//如果请求包中没有cookie
-            captcha_cookie_base64 = helpers.base64Encode("null=null;");
+        String[] lines = helpers.bytesToString(resp.getResponse()).split("\\n");
+        String result = lines[lines.length - 1].replace("\r", "");
+        String regex = "";
+
+        if (cfg.get(6).equals("true")) {
+            String[] p = result.split("\\|");
+            result = p[0];
+            regex = p.length > 1 ? p[1] : "";
+            jta.insert("[+] 验证码" + xiapao_count + ": " + result + " | uuid: " + regex + "\n", 0);
+        } else {
+            jta.insert("[+] 验证码" + xiapao_count + ": " + result + "\n", 0);
         }
 
-        //对验证码接口发起请求
-        String Xiapao_body;
-        List<String> Xiaopao_head = new ArrayList();
-        Xiaopao_head.add("POST /imgurl HTTP/1.1");
-        Xiaopao_head.add("Host: "+XiaPao_api_HOST);
-
-        //map里面的内容：url、模式（1普通、2复杂）、验证码输出模式、复杂模式的验证码请求包、高级模式-数据来源（响应头1/体0）、高级模式-正则、高级模式-按钮（启动true/关闭false）
-        Xiapao_body = "xp_url="+captcha_url_base64+//url
-                "&xp_type="+yzm_set_map_data.get(1)+//模式（1普通、2复杂）
-                "&xp_cookie="+captcha_cookie_base64+//cookie
-                "&xp_set_ranges="+yzm_set_map_data.get(2)+//验证码输出模式
-                "&xp_complex_request="+helpers.base64Encode(yzm_set_map_data.get(3))+//复杂模式的验证码请求包
-                "&xp_rf="+yzm_set_map_data.get(4)+//高级模式-数据来源（响应头1/体0）
-                "&xp_re="+helpers.base64Encode(yzm_set_map_data.get(5))+//高级模式-正则
-                "&xp_is_re_run="+yzm_set_map_data.get(6);//高级模式-按钮（启动true/关闭false）
-
-        IHttpService NEW_HttpService=helpers.buildHttpService(XiaPao_api_HOST,XiaPao_api_Port,"http");
-        byte[] bodyByte = Xiapao_body.getBytes();
-        byte[] new_Requests = helpers.buildHttpMessage(Xiaopao_head, bodyByte); //关键方法
-        IHttpRequestResponse requestResponse = callbacks.makeHttpRequest(NEW_HttpService, new_Requests);//发送请求
-        try{
-            IResponseInfo requestinfo = helpers.analyzeResponse(requestResponse.getResponse());
-            if (requestinfo.getStatusCode()!=200){
-                jta.insert("error：瞎跑接口好像出问题了？接口响应码:"+String.valueOf(requestinfo.getStatusCode())+"\n\n",0);//验证码结果输出到插件界面
-                return;
-            }
-        }catch (Exception ex) {
-            ex.printStackTrace();
-            jta.insert("error：瞎跑接口无应答，是不是配置错地址了 或者 开启代理了导致无法访问127.0.0.1？\n\n",0);//验证码结果输出到插件界面
-            return;
-        }
-
-        String re_rp_data="";//正则匹配的结果
-        String[] temp_1 = helpers.bytesToString(requestResponse.getResponse()).split("\\n");
-        String captcha_data_ok = temp_1[temp_1.length-1].replace("\r","");//验证码识别结果
-        BurpExtender.this.stdout.println(captcha_data_ok);
-        if(yzm_set_map_data.get(6).equals("true")) {
-            String[] captcha_data_ok_all = captcha_data_ok.split("\\|");
-            captcha_data_ok = captcha_data_ok_all[0];
-            re_rp_data = captcha_data_ok_all[1];//正则匹配的结果
-
-            jta.insert("高级模式-验证码" + xiapao_count + "：" + captcha_data_ok + "\n正则结果为："+re_rp_data+"\n\n", 0);//验证码结果输出到插件界面
-        }else {
-            jta.insert("验证码" + xiapao_count + "：" + captcha_data_ok + "\n", 0);//验证码结果输出到插件界面
-        }
-
-        //修改正文
-        IRequestInfo analyIRequestInfo = helpers.analyzeRequest(baseRequestResponse);
-        int bodyOffset = analyIRequestInfo.getBodyOffset();//通过上面的analyIRequestInfo得到请求数据包体（body）的起始偏移
-        String body_temp_1 = request.substring(bodyOffset).replaceAll("@xiapao@\\d@",captcha_data_ok);//修改正文
-        if(yzm_set_map_data.get(6).equals("true")){
-            body_temp_1 = body_temp_1.replaceAll("@xiapao@x@",re_rp_data);//修改正文
-
-            //修改头部
-            for(int i=0;i<headers.size();i++){
-                if (headers.get(i).indexOf("@xiapao@x@") != -1){
-                    String captcha_data = headers.get(i).replaceAll("@xiapao@x@",re_rp_data);//正则替换
-                    headers.set(i,captcha_data);
-                }
-            }
-
-        }
-        byte[] body = body_temp_1.getBytes(StandardCharsets.UTF_8);//通过起始偏移点得到请求数据包体（body）的内容,然后替换
-
-        //修改头部
-        for(int i=0;i<headers.size();i++){
-            //BurpExtender.this.stdout.println(headers.get(i));
-            if (headers.get(i).indexOf("@xiapao@") != -1){
-                String captcha_data = headers.get(i).replaceAll("@xiapao@\\d@",captcha_data_ok);//正则替换
-                headers.set(i,captcha_data);
+        IRequestInfo info = helpers.analyzeRequest(baseRequestResponse);
+        String newBody = request.substring(info.getBodyOffset()).replaceAll("@killcap@\\d@", result);
+        if (cfg.get(6).equals("true")) {
+            newBody = newBody.replaceAll("@killcap@x@", regex);
+            for (int i = 0; i < headers.size(); i++) {
+                if (headers.get(i).indexOf("@killcap@x@") != -1)
+                    headers.set(i, headers.get(i).replaceAll("@killcap@x@", regex));
             }
         }
-
-
-        byte[] newRequest = helpers.buildHttpMessage(headers,body);
-        baseRequestResponse.setRequest(newRequest);//设置最终新的请求包
+        for (int i = 0; i < headers.size(); i++) {
+            if (headers.get(i).indexOf("@killcap@") != -1)
+                headers.set(i, headers.get(i).replaceAll("@killcap@\\d@", result));
+        }
+        baseRequestResponse.setRequest(helpers.buildHttpMessage(headers, newBody.getBytes(StandardCharsets.UTF_8)));
     }
 
-
-
+    private void checkResponseForRetry(IHttpRequestResponse messageInfo) {
+        try {
+            String resp = helpers.bytesToString(messageInfo.getResponse());
+            boolean err = false;
+            for (String kw : retry_keywords.split(",")) {
+                if (resp.contains(kw.trim())) { err = true; break; }
+            }
+            int hash = messageInfo.hashCode();
+            if (err) {
+                int cnt = retryCountMap.getOrDefault(hash, 0);
+                if (cnt < retry_max) {
+                    jta.insert("[!] 重试 " + (cnt+1) + "/" + retry_max + "\n", 0);
+                    retryCountMap.put(hash, cnt + 1);
+                    byte[] orig = originalRequests.get(hash);
+                    if (orig != null) { messageInfo.setRequest(orig); checkVul(messageInfo, xiapao_count); }
+                } else {
+                    jta.insert("[!] 达到最大重试\n", 0);
+                    retryCountMap.remove(hash);
+                    originalRequests.remove(hash);
+                }
+            } else {
+                retryCountMap.remove(hash);
+                originalRequests.remove(hash);
+            }
+        } catch (Exception ex) { stdout.println("[-] 重试异常: " + ex.getMessage()); }
+    }
 }

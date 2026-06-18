@@ -1,108 +1,204 @@
-# xp_CAPTCHA V4.3(瞎跑-白嫖版)
+# killcap V1.0
 
-* 若要准确率更高，请用 https://github.com/smxiazi/xp_CAPTCHA （这个调用别人商业成熟的验证码识别接口）
+Burp Suite 验证码自动识别插件，支持普通验证码和计算型验证码（如 `3+1=?`）。
 
-## 注意
-* 默认使用jdk1.8编译
-* 在最新版的burp2.x中jdk为1x,会导致插件不可用,,使用jdk8编译到不行，请下载jdk16版本试试,若还不行，请自行下载源码使用当前电脑的jdk1x进行编译,谢谢。
-* 爆破时，记得把线程设置为1。
+## 架构
 
-**********
-### 更新4.3 2024-10-11
-* 偷偷更新了下server.py，之前忘记写复杂模式的get数据包的处理了
-
-**********
-### 更新4.3 2024-8-19
-* 新增支持验证码指定输出格式，如：纯整数0-9、纯小写英文a-z、小写英文a-z + 大写英文A-Z + 整数0-9等
-* 新增支持自定义数据包，如发送POST数据包等
-* 新增支持高级模式5个验证码均可同时用（之前只能一个验证码使用高级模式）
-* 新增支持监控Proxy的流量
-* 弃用 muggle-ocr 模块，只是使用ddddocr，模块安装更简单方便
-* 使用方法和之前一样，拉到下面查看使用方法
-* 注意，请更新ddddocr模块到最新版本
 ```
-未安装ddddocr模块
-python3 -m pip install ddddocr
-已经安装过的请更新模块
-python3 -m pip install -U ddddocr
+┌─────────────┐     HTTP      ┌─────────────┐     API      ┌─────────────┐
+│  Burp Suite │ ──────────── │  server.py  │ ──────────── │  LLM Model  │
+│   插件      │   :8899      │  OCR服务端   │   :1234     │  本地大模型  │
+└─────────────┘              └─────────────┘              └─────────────┘
 ```
 
-<img width="1720" alt="image" src="https://github.com/user-attachments/assets/719d66f3-6469-4985-b612-832ac43e9170">
+## 文件说明
 
+| 文件 | 说明 |
+|------|------|
+| `BurpExtender.java` | Burp 插件源码，负责拦截请求、调用 OCR 服务、替换验证码 |
+| `server.py` | Python OCR 服务端，负责获取验证码图片、调用大模型识别、返回结果 |
+| `killcap_v1.0.jar` | 编译好的 Burp 插件 |
 
-<img width="723" alt="image" src="https://github.com/user-attachments/assets/e47a2884-3127-4cd2-ae27-375a7f6c4530">
+## server.py 详解
 
-<img width="1042" alt="image" src="https://github.com/user-attachments/assets/8c52f888-f238-4ab5-a579-3c5009d0dffb">
+### 功能概述
 
+server.py 是一个 HTTP 服务端，监听 `127.0.0.1:8899`，接收 Burp 插件的验证码识别请求，调用本地大模型进行 OCR 识别，返回识别结果。
 
+### 工作流程
 
+```
+1. 接收 Burp 插件的 POST 请求（/imgurl）
+2. 解析参数（验证码URL、Cookie、模式等）
+3. 获取验证码图片（支持 JSON 响应中的 base64 图片）
+4. 调用本地大模型进行 OCR 识别
+5. 如果是计算型验证码，计算数学表达式
+6. 返回识别结果（支持高级模式提取 uuid 等数据）
+```
 
-**********
+### API 接口
 
-### 更新4.2 2022-9-5
+**POST /imgurl**
 
-* 新增支持从验证码返回包中获取内容填充到请求包中（该功能可以支持uuid验证码格式以及其他类似模式）
-* 如果下载我打包好的环境的，请替换掉对应的server.py脚本，本次更新有涉及到该脚本的更新。
+请求参数（form-data）：
 
-<img width="1404" alt="image" src="https://user-images.githubusercontent.com/30351807/188346185-917da8a5-62a1-4095-97ce-ff9896b558ea.png">
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `xp_url` | 验证码 URL（base64 编码） | `aHR0cHM6Ly8uLi4=` |
+| `xp_type` | 请求模式 | `1`=简单, `2`=复杂 |
+| `xp_cookie` | Cookie（base64 编码） | `c2Vzc2lvbj14eHg=` |
+| `xp_set_ranges` | 输出模式 | `9`=计算型验证码 |
+| `xp_complex_request` | 复杂模式请求包（base64 编码） | |
+| `xp_rf` | 高级模式数据源 | `0`=响应体, `1`=响应头 |
+| `xp_re` | 正则表达式（base64 编码） | InV1aWQiOiIoLio/KSI=` |
+| `xp_is_re_run` | 是否启用高级模式 | `true`/`false` |
 
+响应格式：
 
-*********
+```
+识别结果|正则提取数据
+```
 
-### 说明
-xp_CAPTCHA (白嫖版)
-* 验证码识别
-* burp插件
-* 支持验证码返回包为json格式
+示例：
+- 普通模式：`4`
+- 高级模式：`4|878c633b27db4b22996ddcd9df64013b`
 
-*********
-### 使用
-* 用python3 启动server.py服务
-* 把对应的关键字写在填写验证码处即可
+### 本地大模型配置
 
-<img width="1255" alt="image" src="https://user-images.githubusercontent.com/30351807/175557148-b6b7fa0f-5f7a-49fd-9a2a-4c51eda7e0bf.png">
+在 `server.py` 顶部配置：
 
-<img width="1250" alt="image" src="https://user-images.githubusercontent.com/30351807/175553590-9702d872-26a3-4b87-8b3c-0b6a6831e4ab.png">
+```python
+OCR_API_URL = "http://127.0.0.1:1234/v1/chat/completions"
+OCR_API_KEY = "sk-lm-xxx"
+OCR_MODEL = "qwen/qwen2.5-vl-7b"
+```
 
-<img width="1204" alt="image" src="https://user-images.githubusercontent.com/30351807/175553779-103f90f5-2283-4022-ad32-87eee8443086.png">
+支持 OpenAI 兼容格式的本地模型服务（如 LM Studio、Ollama 等）。
 
-<img width="1214" alt="image" src="https://user-images.githubusercontent.com/30351807/175557360-8a4b976c-6e73-42f0-9053-d087c3bbc442.png">
+### 计算型验证码
 
-<img width="665" alt="image" src="https://user-images.githubusercontent.com/30351807/175557566-66e46ff9-4bcc-40de-82ad-fed3ff8bc37d.png">
+当 `xp_set_ranges=9` 时，进入计算型验证码模式：
 
-### 高级设置使用
+1. 调用大模型识别图片中的数学表达式（如 `3+1=?`）
+2. 解析表达式并计算结果
+3. 返回数字结果
 
-* 验证码响应体模式
+支持的运算符：`+` `-` `*` `/` `×` `÷`
 
-每次获取验证码，他返回包为json格式，其中包含了一个字段为uuid，每次登录时都会要求账户密码验证码和uuid一起请求。
-<img width="1397" alt="image" src="https://user-images.githubusercontent.com/30351807/188490525-c69cabf9-68aa-4c75-874a-1fb22ea37ebc.png">
+### Web 监控界面
 
-正常使用正则即可
-<img width="1418" alt="image" src="https://user-images.githubusercontent.com/30351807/188490926-fe351131-f1f9-4a25-8612-3dc5d7b5180d.png">
+访问 `http://127.0.0.1:8899` 可查看：
+- 验证码图片
+- 识别结果
+- 时间戳
+- 验证码类型
 
-<img width="1392" alt="image" src="https://user-images.githubusercontent.com/30351807/188491180-c6da6d0b-fbc5-4094-b35c-7d118755b7fd.png">
+### 依赖安装
 
+```bash
+pip3 install requests pillow
+```
 
+## 使用方法
 
+### 1. 启动 OCR 服务端
 
-* 验证码响应头模式
+```bash
+python3 server.py
+```
 
-该站每次请求获取验证码，都会重新设置cookie。
-<img width="1410" alt="image" src="https://user-images.githubusercontent.com/30351807/188486933-e086f07a-2aaa-49e5-832a-8d83d4abcb63.png">
+### 2. 加载 Burp 插件
 
-响应头部的正则参数语法：
-响应头对应的参数名|对应参数值的正则匹配。如我这个站是从 `Set-Cookie`里面获取`kaptchaId`的值，那么正则为`Set-Cookie|kaptchaId=(.*?);`
-<img width="1435" alt="image" src="https://user-images.githubusercontent.com/30351807/188487200-468ff302-977b-4ea5-96f8-2fdca126261d.png">
+1. 打开 Burp Suite → Extender → Extensions
+2. 点击 Add → 选择 `killcap_v1.0.jar`
+3. 确认插件加载成功
 
-<img width="1413" alt="image" src="https://user-images.githubusercontent.com/30351807/188487344-91b40601-d704-484f-a148-e8241647d15e.png">
+### 3. 配置插件
 
+在 `killcap` 标签页：
 
-### Star
+1. **OCR 接口**：`127.0.0.1:8899`（默认）
+2. **验证码 URL**：填写获取验证码的接口地址
+3. **输出模式**：选择对应的模式（计算型验证码选"计算型验证码"）
+4. **监控设置**：勾选需要监控的工具（Intruder/Repeater/Proxy）
+5. 点击 **保存配置**
 
-[![Stargazers over time](https://starchart.cc/smxiazi/NEW_xp_CAPTCHA.svg)](https://starchart.cc/smxiazi/NEW_xp_CAPTCHA)
+### 4. 使用关键字
 
-**********
+在请求中使用以下关键字：
 
-### 更新4.1 2022-6-24
+| 关键字 | 说明 |
+|--------|------|
+| `@killcap@1@` | 验证码 1 的识别结果 |
+| `@killcap@2@` | 验证码 2 的识别结果 |
+| `@killcap@3@` | 验证码 3 的识别结果 |
+| `@killcap@4@` | 验证码 4 的识别结果 |
+| `@killcap@5@` | 验证码 5 的识别结果 |
+| `@killcap@x@` | 高级模式提取的数据（如 uuid） |
 
-* 大改版，强烈安装新版本
+### 5. 示例请求
+
+```http
+POST /login HTTP/1.1
+Host: target.com
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "123456",
+  "code": "@killcap@1@",
+  "uuid": "@killcap@x@"
+}
+```
+
+## 高级模式
+
+高级模式用于从验证码响应中提取额外数据（如 uuid）。
+
+### 配置
+
+1. **数据源**：选择从响应体或响应头提取
+2. **正则**：填写正则表达式，用 `()` 包裹要提取的部分
+3. 点击 **开启高级模式**
+4. **保存配置**
+
+### 示例
+
+验证码接口返回：
+```json
+{"img": "base64...", "uuid": "878c633b27db4b22996ddcd9df64013b"}
+```
+
+正则：`"uuid":"(.*?)"`
+
+提取结果：`878c633b27db4b22996ddcd9df64013b`
+
+在请求中使用 `@killcap@x@` 会被替换为提取的 uuid。
+
+## 重试设置
+
+当验证码识别错误时，可自动重试：
+
+1. 勾选 **错误重试**
+2. 设置最大重试次数（默认 3 次）
+3. 错误关键词（默认：验证码错误,验证码已失效）
+
+## 编译
+
+```bash
+# 编译 Burp 插件
+mkdir -p build
+javac -source 1.8 -target 1.8 -classpath burp.jar -d build BurpExtender.java
+cd build
+jar cf ../killcap_v1.0.jar burp/
+```
+
+## 注意事项
+
+- 爆破时线程设置为 1
+- 确保本地大模型服务正常运行
+- 验证码 URL 需要填写完整的 HTTP 地址
+
+## License
+
+MIT License
