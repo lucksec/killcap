@@ -15,7 +15,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class BurpExtender implements IBurpExtender, ITab, IHttpListener
+public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IContextMenuFactory
 {
     private IBurpExtenderCallbacks callbacks;
     private IExtensionHelpers helpers;
@@ -32,9 +32,13 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
     Map<Integer, List<String>> yzm_set_map = new HashMap<>();
     JTextArea jta;
     JTextField jps_txtfield_1;
+    JTextField jtf_captcha_url;
     JComboBox jb_1;
+    JComboBox jb_captcha_sel;
+    JLabel jl_hint;
+    JLabel[] jl_captcha_urls;
     Boolean re_switch = false;
-    String xp_version = "1.0";
+    String xp_version = "1.1";
     String plugin_name = "killcap";
 
     int retry_switch = 0;
@@ -78,6 +82,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 JPanel jp_sel = new JPanel(new BorderLayout(3, 0));
                 jp_sel.setBorder(BorderFactory.createTitledBorder(" 验证码编号 "));
                 JComboBox jb_set = new JComboBox();
+                jb_captcha_sel = jb_set;
                 for (int i = 1; i <= 5; i++) jb_set.addItem("验证码 " + i);
                 jp_sel.add(jb_set, BorderLayout.CENTER);
                 jp_top_row.add(jp_api);
@@ -88,6 +93,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 JPanel jp_keyword = new JPanel(new BorderLayout(3, 0));
                 jp_keyword.setBorder(BorderFactory.createTitledBorder(" 关键字 "));
                 jl_status = new JLabel(" @killcap@1@ ", SwingConstants.CENTER);
+
                 jl_status.setFont(new Font(Font.MONOSPACED, Font.BOLD, 14));
                 jl_status.setForeground(new Color(0, 153, 255));
                 jl_status.setOpaque(true);
@@ -96,6 +102,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 JPanel jp_url = new JPanel(new BorderLayout(3, 0));
                 jp_url.setBorder(BorderFactory.createTitledBorder(" 验证码URL "));
                 JTextField txtfield_1 = new JTextField();
+                jtf_captcha_url = txtfield_1;
                 jp_url.add(txtfield_1, BorderLayout.CENTER);
                 jp_mid_row.add(jp_keyword, BorderLayout.WEST);
                 jp_mid_row.add(jp_url, BorderLayout.CENTER);
@@ -130,7 +137,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 jp_bot_row.add(jp_output);
 
                 // 状态提示
-                JLabel jl_hint = new JLabel(" ");
+                jl_hint = new JLabel(" ");
                 jl_hint.setForeground(Color.RED);
                 jl_hint.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
 
@@ -196,11 +203,11 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 JLabel jl_list_title = new JLabel("编号 | 模式 | URL");
                 jl_list_title.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 11));
                 jp_list.add(jl_list_title);
-                JLabel[] jl_urls = new JLabel[5];
+                jl_captcha_urls = new JLabel[5];
                 for (int i = 0; i < 5; i++) {
-                    jl_urls[i] = new JLabel("  " + (i+1) + ": 未配置");
-                    jl_urls[i].setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
-                    jp_list.add(jl_urls[i]);
+                    jl_captcha_urls[i] = new JLabel("  " + (i+1) + ": 未配置");
+                    jl_captcha_urls[i].setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+                    jp_list.add(jl_captcha_urls[i]);
                 }
 
                 jp_bottom_area.add(splitLeftBottom);
@@ -396,7 +403,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                         yzm_set_map.put(idx, cfg);
 
                         String shortUrl = url.length() > 30 ? url.substring(0, 30) + ".." : url;
-                        jl_urls[idx-1].setText("  " + idx + ": " + modeName + " | " + shortUrl);
+                        jl_captcha_urls[idx-1].setText("  " + idx + ": " + modeName + " | " + shortUrl);
                         jl_hint.setText("已保存: 验证码 " + idx);
                         jl_hint.setForeground(new Color(0, 153, 255));
                         jta.insert("[*] 保存: 验证码 " + idx + " (" + modeName + ")\n", 0);
@@ -410,6 +417,7 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 callbacks.customizeUiComponent(splitPane);
                 callbacks.addSuiteTab(BurpExtender.this);
                 callbacks.registerHttpListener(BurpExtender.this);
+                callbacks.registerContextMenuFactory(BurpExtender.this);
             }
         });
     }
@@ -435,6 +443,30 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener
                 checkResponseForRetry(messageInfo);
             }
         }
+    }
+
+    @Override
+    public List<JMenuItem> createMenuItems(IContextMenuInvocation invocation) {
+        List<JMenuItem> menuItems = new ArrayList<>();
+        JMenuItem item = new JMenuItem("发送到 killcap 验证码");
+        item.addActionListener(e -> {
+            IHttpRequestResponse[] selected = invocation.getSelectedMessages();
+            if (selected == null || selected.length == 0) return;
+
+            IHttpRequestResponse msg = selected[0];
+            IRequestInfo info = helpers.analyzeRequest(msg);
+            String url = info.getUrl().toString();
+
+            // 切到当前验证码编号并填入URL
+            int idx = jb_captcha_sel.getSelectedIndex() + 1;
+            jtf_captcha_url.setText(url);
+
+            jl_hint.setText("已导入: " + (url.length() > 50 ? url.substring(0, 50) + "..." : url));
+            jl_hint.setForeground(new Color(0, 153, 255));
+            jta.insert("[*] 导入验证码URL: " + url + "\n", 0);
+        });
+        menuItems.add(item);
+        return menuItems;
     }
 
     private void checkVul(IHttpRequestResponse baseRequestResponse, int xiapao_count) {
